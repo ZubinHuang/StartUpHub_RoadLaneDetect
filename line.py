@@ -1,90 +1,62 @@
 # -*- coding: utf-8 -*-
 """
+Created on Tue Oct 10 19:38:04 2017
 
-
-@author: ZubinHuang
+@author: yang
 """
-
-import os
-import cv2
-import utils
-import matplotlib.pyplot as plt
 import numpy as np
-from moviepy.editor import VideoFileClip
-import line
 
-def thresholding(img):
-    #setting all sorts of thresholds
-    x_thresh = utils.abs_sobel_thresh(img, orient='x', thresh_min=10 ,thresh_max=230)
-    mag_thresh = utils.mag_thresh(img, sobel_kernel=3, mag_thresh=(30, 150))
-    dir_thresh = utils.dir_threshold(img, sobel_kernel=3, thresh=(0.7, 1.3))
-    hls_thresh = utils.hls_select(img, thresh=(120, 255))
-    lab_thresh = utils.lab_select(img, thresh=(155, 200))
-    luv_thresh = utils.luv_select(img, thresh=(225, 255))
-
-    #Thresholding combination
-    threshholded = np.zeros_like(x_thresh)
-    threshholded[((x_thresh == 1) & (mag_thresh == 1)) | ((dir_thresh == 1) & (hls_thresh == 1)) | (lab_thresh == 1) | (luv_thresh == 1)] = 1
-
-    return threshholded
-
-
-def processing(img,object_points,img_points,M,Minv,left_line,right_line):
-    #camera calibration, image distortion correction
-    undist = utils.cal_undistort(img,object_points,img_points)
-    #get the thresholded binary image
-    thresholded = thresholding(undist)
-    #perform perspective  transform
-    thresholded_wraped = cv2.warpPerspective(thresholded, M, img.shape[1::-1], flags=cv2.INTER_LINEAR)
-
-    #perform detection
-    if left_line.detected and right_line.detected:
-        left_fit, right_fit, left_lane_inds, right_lane_inds = utils.find_line_by_previous(thresholded_wraped,left_line.current_fit,right_line.current_fit)
-    else:
-        left_fit, right_fit, left_lane_inds, right_lane_inds = utils.find_line(thresholded_wraped)
-    left_line.update(left_fit)
-    right_line.update(right_fit)
-
-    #draw the detected laneline and the information
-    area_img = utils.draw_area(undist,thresholded_wraped,Minv,left_fit, right_fit)
-    curvature,pos_from_center = utils.calculate_curv_and_pos(thresholded_wraped,left_fit, right_fit)
-    result = utils.draw_values(area_img,curvature,pos_from_center)
-
-    return result
-#
-#
-left_line = line.Line()
-right_line = line.Line()
-cal_imgs = utils.get_images_by_dir('camera_cal')
-object_points,img_points = utils.calibrate(cal_imgs,grid=(9,6))
-M,Minv = utils.get_M_Minv()
-
-##draw the processed video
-project_outpath = 'vedio_out/project_video_out2.mp4'
-#project_video_clip = VideoFileClip("project_video.mp4")
-project_video_clip = VideoFileClip("14s.mp4")
-project_video_out_clip = project_video_clip.fl_image(lambda clip: processing(clip,object_points,img_points,M,Minv,left_line,right_line))
-project_video_out_clip.write_videofile(project_outpath, audio=False)
-
-
-
-##draw the processed test image
-test_imgs = utils.get_images_by_dir('test_images')
-undistorted = []
-for img in test_imgs:
-   img = utils.cal_undistort(img,object_points,img_points)
-   undistorted.append(img)
-
-result=[]
-for img in undistorted:
-   res = processing(img,object_points,img_points,M,Minv,left_line,right_line)
-   result.append(res)
-
-plt.figure(figsize=(10,10))
-for i in range(len(result)):
-
-   plt.subplot(len(result),1,i+1)
-   plt.title('thresholded_wraped image')
-   plt.imshow(result[i][:,:,::-1])
-   plt.show()
+# Define a class to receive the characteristics of each line detection
+class Line():
+    def __init__(self):
+        # was the line detected in the last iteration?
+        self.detected = False  
+        # x values of the last n fits of the line
+        self.recent_fitted = [np.array([False])]
+        #average x values of the fitted line over the last n iterations
+        self.bestx = None     
+        #polynomial coefficients averaged over the last n iterations
+        self.best_fit = None  
+        #polynomial coefficients for the most recent fit
+        self.current_fit = [np.array([False])]  
+        #radius of curvature of the line in some units
+        self.radius_of_curvature = None 
+        #distance in meters of vehicle center from the line
+        self.line_base_pos = None 
+        #difference in fit coefficients between last and new fits
+        self.diffs = np.array([0,0,0], dtype='float') 
+        #x values for detected line pixels
+        self.allx = None  
+        #y values for detected line pixels
+        self.ally = None
     
+    def check_detected(self):
+        if (self.diffs[0] < 0.01 and self.diffs[1] < 10.0 and self.diffs[2] < 1000.) and len(self.recent_fitted) > 0:
+            return True
+        else:
+            return False
+    
+        
+    def update(self,fit):
+        if fit is not None:
+            if self.best_fit is not None:
+                self.diffs = abs(fit - self.best_fit)
+                if self.check_detected():
+                    self.detected =True
+                    if len(self.recent_fitted)>10:
+                        self.recent_fitted = self.recent_fitted[1:]
+                        self.recent_fitted.append(fit)
+                    else:
+                        self.recent_fitted.append(fit)
+                    self.best_fit = np.average(self.recent_fitted, axis=0)
+                    self.current_fit = fit
+                else:
+                    self.detected = False
+            else:
+                self.best_fit = fit
+                self.current_fit = fit
+                self.detected=True
+                self.recent_fitted.append(fit)
+            
+        
+        
